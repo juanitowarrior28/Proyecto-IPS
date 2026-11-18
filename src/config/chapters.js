@@ -6,7 +6,7 @@ export const chapters = [
 ];
 
 export const endingChapters = [
-  { id: 'vincent', folderName: 'Vincent', title: 'Final 1 — Vincent', file: '/assets/audio/final1.wav', image: '/assets/images/final%201%20(vincent).png', subtitles: null, duration: 20 },
-  { id: 'leteo', folderName: 'Leteo', title: 'Final 2 — Leteo', file: '/assets/audio/final2.wav', image: '/assets/images/final%202%20(leteo).png', subtitles: null, duration: 20 },
-  { id: 'ips', folderName: 'IPS', title: 'Final 3 — IPS', file: '/assets/audio/final3.wav', image: '/assets/images/final%203%20(ips).png', subtitles: null, duration: 20 }
+  { id: 'vincent', folderName: 'Vincent', title: 'Final 1 — Vincent', file: '/assets/audio/final1.wav', image: '/assets/images/final%201%20(vincent).png', subtitles: '/assets/subtitles/final1.vtt', duration: 20 },
+  { id: 'leteo', folderName: 'Leteo', title: 'Final 2 — Leteo', file: '/assets/audio/final2.wav', image: '/assets/images/final%202%20(leteo).png', subtitles: '/assets/subtitles/final2.vtt', duration: 20 },
+  { id: 'ips', folderName: 'IPS', title: 'Final 3 — IPS', file: '/assets/audio/final3.wav', image: '/assets/images/final%203%20(ips).png', subtitles: '/assets/subtitles/final3.vtt', duration: 20 }
 ];

@@ -6,8 +6,11 @@ import { GameState } from './core/GameState.js';
 import { ProgressionSystem } from './core/ProgressionSystem.js';
 import { AudioSystem } from './core/AudioSystem.js';
 import { RoomScene } from './scene/RoomScene.js';
+import { quotes } from './config/quotes.js';
 
 class Game {
+  static loadingDuration = 20_000;
+
   constructor() {
     this.app = document.querySelector('#app');
     this.saveManager = new SaveManager();
@@ -16,11 +19,17 @@ class Game {
     this.audio = new AudioSystem();
     this.mode = 'menu';
     this.currentChapter = null;
+    this.currentSubtitleText = '';
     this.mouseLookEnabled = false;
     this.pointerLockWarningShown = false;
     this.subtitles = [];
     this.subtitleVisible = true;
     this.clock = new THREE.Clock();
+    this.animationFrame = null;
+    this.controlsAbortController = null;
+    this.pauseState = null;
+    this.loadingTimeout = null;
+    this.loadingInterval = null;
     this.renderMenu();
   }
   save() { this.saveManager.save(this.state.state); }
@@ -51,18 +60,56 @@ class Game {
       this.saveManager.clear();
       this.state = new GameState(defaultSave());
       this.progress = new ProgressionSystem(this);
-      this.startGame();
+      this.showScriptureLoading(() => this.startGame());
     };
     if (saved) document.querySelector('#continueGame').onclick = () => {
       this.state = new GameState(this.saveManager.load() || defaultSave());
       this.progress = new ProgressionSystem(this);
-      this.startGame();
+      this.showScriptureLoading(() => this.startGame());
     };
     document.querySelector('#settings').onclick = () => this.renderSettings();
   }
-  renderSettings() {
-    const s = this.state.state.settings;
+  showScriptureLoading(onComplete) {
+    clearTimeout(this.loadingTimeout);
+    clearInterval(this.loadingInterval);
+    this.mode = 'loading';
+    const quote = quotes[Math.floor(Math.random() * quotes.length)];
     this.app.innerHTML = `
+      <main class="scripture-loading menu-screen" aria-label="Pantalla de carga">
+        <div class="menu-noise"></div>
+        <section class="scripture-panel" aria-live="polite">
+          <p class="menu-kicker">ARCHIVO DE VIGILANCIA // 1994</p>
+          <blockquote>“${quote.text}”</blockquote>
+          <p class="scripture-reference">— ${quote.reference}</p>
+          <div class="loading-track" role="progressbar" aria-label="Cargando" aria-valuemin="0" aria-valuemax="20" aria-valuenow="0">
+            <div class="loading-fill"></div>
+          </div>
+          <p id="loadingCountdown">PREPARANDO // 20</p>
+        </section>
+      </main>`;
+    const startedAt = Date.now();
+    this.loadingInterval = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((Game.loadingDuration - (Date.now() - startedAt)) / 1000));
+      const countdown = this.app.querySelector('#loadingCountdown');
+      const progress = this.app.querySelector('.loading-track');
+      if (countdown) countdown.textContent = `PREPARANDO // ${remaining}`;
+      if (progress) progress.setAttribute('aria-valuenow', String(20 - remaining));
+    }, 250);
+    this.loadingTimeout = setTimeout(() => {
+      clearInterval(this.loadingInterval);
+      this.loadingInterval = null;
+      this.loadingTimeout = null;
+      onComplete();
+    }, Game.loadingDuration);
+  }
+  renderSettings(fromPause = false) {
+    const s = this.state.state.settings;
+    const settingsRoot = fromPause ? document.createElement('div') : this.app;
+    if (fromPause) {
+      settingsRoot.id = 'settingsOverlay';
+      document.body.appendChild(settingsRoot);
+    }
+    settingsRoot.innerHTML = `
       <main class="menu-screen settings-screen">
         <section class="menu-panel settings-panel">
           <h2>CONFIGURACIÓN</h2>
@@ -72,22 +119,31 @@ class Game {
           <label>Reducir parpadeos <input id="reduceFlashes" type="checkbox" ${s.reduceFlashes ? 'checked' : ''}></label>
           <label>Reducir movimiento <input id="reduceMovement" type="checkbox" ${s.reduceMovement ? 'checked' : ''}></label>
           <label>Interferencias <input id="interference" type="checkbox" ${s.interference ? 'checked' : ''}></label>
-          <button id="backMenu">Volver al menú</button>
+          <button id="backMenu">${fromPause ? 'Volver a pausa' : 'Volver al menú'}</button>
         </section>
       </main>`;
     const values = ['subtitleSetting','generalVolume','sensitivity','reduceFlashes','reduceMovement','interference'];
-    values.forEach((id) => document.querySelector('#'+id).addEventListener('change', (e) => {
+    values.forEach((id) => settingsRoot.querySelector('#'+id).addEventListener('change', (e) => {
       const map = { subtitleSetting:'subtitles', generalVolume:'generalVolume', sensitivity:'mouseSensitivity', reduceFlashes:'reduceFlashes', reduceMovement:'reduceMovement', interference:'interference' };
       s[map[id]] = e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value);
       if (id === 'sensitivity') this.lookSensitivity = 0.0045 * s.mouseSensitivity;
       this.save();
     }));
-    document.querySelector('#backMenu').onclick = () => this.renderMenu();
+    settingsRoot.querySelector('#backMenu').onclick = () => {
+      if (fromPause) settingsRoot.remove();
+      else this.renderMenu();
+    };
   }
   startGame() {
-    this.app.innerHTML = `<canvas id="gameCanvas"></canvas><div id="crosshair"></div><div id="contextHint"></div><div id="lookTip">RATÓN: MIRAR · WASD: MOVER · E: INTERACTUAR · CLIC: CAPTURAR RATÓN</div><div id="holdIndicator" class="hold-indicator" hidden><span id="holdLabel"></span><div class="hold-track"><div id="holdFill"></div></div></div><div id="hotbar" class="hotbar" aria-label="Inventario"></div><div id="hud"></div><div id="computerOverlay"></div>`;
+    this.controlsAbortController?.abort();
+    if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
+    this.app.innerHTML = `<canvas id="gameCanvas"></canvas><div id="crosshair"></div><div id="contextHint"></div><div id="lookTip">RATÓN: MIRAR · WASD: MOVER · E: INTERACTUAR · CLIC: CAPTURAR RATÓN</div><div id="holdIndicator" class="hold-indicator" hidden><span id="holdLabel"></span><div class="hold-track"><div id="holdFill"></div></div></div><div id="hotbar" class="hotbar" aria-label="Inventario"></div><div id="hud"></div><div id="computerOverlay"></div><button id="gameMenuButton" class="game-menu-button" aria-label="Abrir menú de pausa" title="Opciones">⋮</button><div id="pauseMenu" class="pause-menu" hidden><section class="pause-panel" role="dialog" aria-modal="true" aria-labelledby="pauseTitle"><h2 id="pauseTitle">PAUSA</h2><button id="resumeGame">SEGUIR JUGANDO</button><button id="saveGame">GUARDAR PARTIDA</button><button id="pauseSettings">CONFIGURACIÓN</button><button id="exitToMenu">SALIR AL MENÚ</button></section></div>`;
     this.room = new RoomScene(document.querySelector('#gameCanvas'));
-    this.room.setPhase(this.state.state.phase, this.state.state.keysFound);
+    this.room.setPhase(
+      this.state.state.phase,
+      this.state.state.keysFound,
+      this.state.state.completed.includes('chapter2')
+    );
     this.room.setCompartmentState(
       this.state.state.compartmentUnlocked,
       this.state.state.compartmentOpen,
@@ -101,19 +157,22 @@ class Game {
     this.setupControls();
     this.mode = 'room';
     this.renderHotbar();
+    this.pauseState = null;
     this.audio.ensure();
     this.audio.ambient();
     this.animate();
   }
   setupControls() {
     const canvas = document.querySelector('#gameCanvas');
+    this.controlsAbortController = new AbortController();
+    const listenerOptions = { signal: this.controlsAbortController.signal };
     canvas.addEventListener('click', () => {
       if (this.mode === 'room') {
         this.mouseLookEnabled = true;
         if (document.pointerLockElement !== document.body) this.requestPointerLock();
       }
       this.audio.ensure();
-    });
+    }, listenerOptions);
     document.addEventListener('mousemove', (event) => {
       if (this.mode !== 'room' || !this.mouseLookEnabled) return;
       this.targetYaw = Math.atan2(
@@ -125,33 +184,47 @@ class Game {
         -Math.PI / 2 + 0.05,
         Math.PI / 2 - 0.05
       );
-    });
+    }, listenerOptions);
     document.addEventListener('pointerlockchange', () => {
       if (this.mode === 'room' && !document.pointerLockElement) this.mouseLookEnabled = true;
-    });
+    }, listenerOptions);
     document.addEventListener('mousedown', (event) => {
       if (event.button === 0 && this.mode === 'room' && document.pointerLockElement === document.body) {
         this.interact();
       }
-    });
+    }, listenerOptions);
     document.addEventListener('keydown', (e) => {
       this.keys[e.code] = true;
       if (e.code === 'KeyI' && this.mode === 'room') this.toggleInventory();
       if (e.code === 'KeyE' && this.mode === 'room' && !e.repeat) this.handleEKeyDown();
       if (e.code === 'Escape' && this.mode === 'computer') this.leaveComputer();
-    });
+      if (e.code === 'Escape' && this.mode === 'room') this.openPauseMenu();
+      if (e.code === 'Escape' && this.mode === 'paused' && !document.querySelector('#settingsOverlay')) this.resumeGame();
+    }, listenerOptions);
     document.addEventListener('keyup', (e) => {
       this.keys[e.code] = false;
       if (e.code === 'KeyE') this.cancelHoldInteraction();
-    });
+    }, listenerOptions);
     window.addEventListener('blur', () => {
       this.keys = {};
       this.cancelHoldInteraction();
-    });
+    }, listenerOptions);
+    document.querySelector('#gameMenuButton').onclick = () => this.openPauseMenu();
+    document.querySelector('#resumeGame').onclick = () => this.resumeGame();
+    document.querySelector('#saveGame').onclick = () => {
+      this.save();
+      this.notify('Partida guardada.');
+    };
+    document.querySelector('#pauseSettings').onclick = () => this.renderSettings(true);
+    document.querySelector('#exitToMenu').onclick = () => this.exitToMenu();
   }
   animate() {
-    requestAnimationFrame(() => this.animate());
+    this.animationFrame = requestAnimationFrame(() => this.animate());
     const delta = Math.min(this.clock.getDelta(), 0.05);
+    if (this.mode === 'paused') {
+      this.room.render();
+      return;
+    }
     if (this.mode === 'room' && this.mouseLookEnabled) {
       this.updateCameraLook(delta);
       this.move(delta);
@@ -160,6 +233,49 @@ class Game {
     this.updateHoldInteraction();
     this.room.update(delta);
     this.room.render();
+  }
+  openPauseMenu() {
+    if (!['room', 'computer'].includes(this.mode)) return;
+    this.pauseState = {
+      mode: this.mode,
+      mouseLookEnabled: this.mouseLookEnabled,
+      audioWasPlaying: Boolean(this.audioElement && !this.audioElement.paused)
+    };
+    this.mode = 'paused';
+    this.keys = {};
+    this.cancelHoldInteraction();
+    this.audioElement?.pause();
+    this.mouseLookEnabled = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    document.querySelector('#pauseMenu').hidden = false;
+  }
+  resumeGame() {
+    if (this.mode !== 'paused') return;
+    document.querySelector('#pauseMenu').hidden = true;
+    const pauseState = this.pauseState;
+    this.mode = pauseState?.mode || 'room';
+    this.mouseLookEnabled = this.mode === 'room' || Boolean(pauseState?.mouseLookEnabled);
+    this.pauseState = null;
+    if (pauseState?.audioWasPlaying && this.audioElement) {
+      this.audioElement.play().catch(() => {
+        const error = document.querySelector('#audioError');
+        if (error) error.textContent = 'El navegador bloqueó la reproducción.';
+      });
+    }
+  }
+  exitToMenu() {
+    this.save();
+    this.cancelHoldInteraction();
+    this.stopAudio();
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.controlsAbortController?.abort();
+    if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
+    this.animationFrame = null;
+    this.room.renderer.dispose();
+    this.room = null;
+    this.keys = {};
+    this.pauseState = null;
+    this.showScriptureLoading(() => this.renderMenu());
   }
   move(delta) {
     const speed = this.state.state.settings.reduceMovement ? 1.5 : 2.2;
@@ -170,10 +286,13 @@ class Game {
     this.room.camera.getWorldDirection(direction); direction.y = 0; direction.normalize();
     const right = new THREE.Vector3().crossVectors(direction, this.room.camera.up).normalize();
     const pos = this.room.camera.position.clone();
-    pos.addScaledVector(direction, forward * speed * delta);
-    pos.addScaledVector(right, side * speed * delta);
-    pos.x = THREE.MathUtils.clamp(pos.x, -1.65, 1.65);
-    pos.z = THREE.MathUtils.clamp(pos.z, -1.1, 1.9);
+    const next = pos.clone()
+      .addScaledVector(direction, forward * speed * delta)
+      .addScaledVector(right, side * speed * delta);
+    const nextX = THREE.MathUtils.clamp(next.x, -1.65, 1.65);
+    const nextZ = THREE.MathUtils.clamp(next.z, -1.1, 1.9);
+    if (!this.room.isBlocked(nextX, pos.z)) pos.x = nextX;
+    if (!this.room.isBlocked(pos.x, nextZ)) pos.z = nextZ;
     this.room.camera.position.copy(pos);
   }
   syncLookTarget() {
@@ -328,7 +447,7 @@ class Game {
     this.audio.click();
     if (id === 'computer') this.enterComputer();
     if (id === 'drawer') {
-      const keyAvailable = this.state.state.phase >= 3 && !this.state.state.keysFound;
+      const keyAvailable = this.state.state.completed.includes('chapter2') && !this.state.state.keysFound;
       this.room.openDrawer(hit.object.userData.drawerIndex, keyAvailable);
       this.notify(keyAvailable ? 'El cajón se abre. Hay una llave dentro.' : 'El cajón se abre; está vacío.');
     }
@@ -436,6 +555,7 @@ class Game {
   renderPlayer(id) {
     const chapter = [...chapters, ...endingChapters].find((c) => c.id === id);
     this.stopAudio();
+    this.subtitleVisible = this.state.state.settings.subtitles;
     const overlay = document.querySelector('#computerOverlay');
     overlay.innerHTML = `
       <div class="crt player">
@@ -451,27 +571,61 @@ class Game {
       </div>`;
     overlay.querySelector('#playerBack').onclick = () => { this.stopAudio(); this.renderComputerMenu(); };
     this.currentChapter = id;
-    this.audioElement = new Audio(chapter.file);
-    this.subtitleVisible = this.state.state.settings.subtitles;
-    this.audioElement.addEventListener('loadedmetadata', () => {
-      overlay.querySelector('#progressBar').max = this.audioElement.duration;
-      overlay.querySelector('#duration').textContent = this.formatTime(this.audioElement.duration);
+    const audioElement = new Audio(chapter.file);
+    this.audioElement = audioElement;
+    this.currentSubtitleText = '';
+    if (chapter.subtitles) {
+      const trackElement = document.createElement('track');
+      trackElement.kind = 'subtitles';
+      trackElement.label = 'Español';
+      trackElement.srclang = 'es';
+      trackElement.src = chapter.subtitles;
+      trackElement.default = true;
+      audioElement.appendChild(trackElement);
+      trackElement.track.mode = 'hidden';
+      trackElement.addEventListener('cuechange', () => {
+        if (this.audioElement !== audioElement) return;
+        this.currentSubtitleText = trackElement.track.activeCues?.[0]?.text || '';
+        this.updateSubtitleDisplay();
+      });
+      trackElement.addEventListener('error', () => {
+        if (this.audioElement !== audioElement) return;
+        const subtitleError = overlay.querySelector('#audioError');
+        if (subtitleError) subtitleError.textContent = 'No se pudieron cargar los subtítulos.';
+        console.warn(`No se pudieron cargar los subtítulos: ${chapter.subtitles}`);
+      });
+    }
+    audioElement.addEventListener('loadedmetadata', () => {
+      if (this.audioElement !== audioElement) return;
+      overlay.querySelector('#progressBar').max = audioElement.duration;
+      overlay.querySelector('#duration').textContent = this.formatTime(audioElement.duration);
     });
-    this.audioElement.addEventListener('error', () => { overlay.querySelector('#audioError').textContent = 'Archivo de audio no disponible. Se conservará la progresión de prueba.'; });
-    this.audioElement.addEventListener('timeupdate', () => this.updatePlayer());
-    this.audioElement.addEventListener('ended', () => this.chapterEnded(id));
-    overlay.querySelector('#play').onclick = () => this.audioElement.play().catch(() => overlay.querySelector('#audioError').textContent = 'El navegador bloqueó la reproducción.');
-    overlay.querySelector('#pause').onclick = () => this.audioElement.pause();
-    overlay.querySelector('#rewind').onclick = () => { this.audioElement.currentTime = Math.max(0, this.audioElement.currentTime - 15); };
-    overlay.querySelector('#forward').onclick = () => { this.audioElement.currentTime = Math.min(this.audioElement.duration || 0, this.audioElement.currentTime + 15); };
-    overlay.querySelector('#progressBar').oninput = (e) => { this.audioElement.currentTime = Number(e.target.value); };
+    audioElement.addEventListener('error', () => {
+      if (this.audioElement !== audioElement) return;
+      overlay.querySelector('#audioError').textContent = 'Archivo de audio no disponible. Se conservará la progresión de prueba.';
+    });
+    audioElement.addEventListener('timeupdate', () => {
+      if (this.audioElement === audioElement) this.updatePlayer();
+    });
+    audioElement.addEventListener('ended', () => {
+      if (this.audioElement === audioElement) this.chapterEnded(id);
+    });
+    overlay.querySelector('#play').onclick = () => audioElement.play().catch(() => {
+      if (this.audioElement === audioElement) overlay.querySelector('#audioError').textContent = 'El navegador bloqueó la reproducción.';
+    });
+    overlay.querySelector('#pause').onclick = () => audioElement.pause();
+    overlay.querySelector('#rewind').onclick = () => { audioElement.currentTime = Math.max(0, audioElement.currentTime - 15); };
+    overlay.querySelector('#forward').onclick = () => { audioElement.currentTime = Math.min(audioElement.duration || 0, audioElement.currentTime + 15); };
+    overlay.querySelector('#progressBar').oninput = (e) => { audioElement.currentTime = Number(e.target.value); };
     const subtitlesButton = overlay.querySelector('#subtitles');
     if (subtitlesButton) {
       subtitlesButton.onclick = (e) => {
         this.subtitleVisible = !this.subtitleVisible;
         e.target.textContent = `SUBTÍTULOS: ${this.subtitleVisible ? 'ON' : 'OFF'}`;
+        this.updateSubtitleDisplay();
       };
     }
+    this.updateSubtitleDisplay();
   }
   updatePlayer() {
     if (!this.audioElement) return;
@@ -480,18 +634,26 @@ class Game {
     if (bar) bar.value = t;
     const elapsed = document.querySelector('#elapsed');
     if (elapsed) elapsed.textContent = this.formatTime(t);
+    this.updateSubtitleDisplay();
+  }
+  updateSubtitleDisplay() {
     const box = document.querySelector('#subtitleBox');
-    const currentAudio = [...chapters, ...endingChapters].find((chapter) => chapter.id === this.currentChapter);
-    if (box) box.textContent = this.subtitleVisible && currentAudio?.subtitles
-      ? '[Contenido provisional reemplazable por el subtítulo original]'
-      : '';
+    if (box) {
+      box.textContent = this.subtitleVisible && this.state.state.settings.subtitles
+        ? this.currentSubtitleText
+        : '';
+    }
   }
   stopAudio() {
     if (this.audioElement) { this.audioElement.pause(); this.audioElement.src = ''; this.audioElement = null; }
   }
   chapterEnded(id) {
     this.state.emit('CHAPTER_FINISHED', id);
-    this.room.setPhase(this.state.state.phase, this.state.state.keysFound);
+    this.room.setPhase(
+      this.state.state.phase,
+      this.state.state.keysFound,
+      this.state.state.completed.includes('chapter2')
+    );
     this.save();
     this.notify(id === 'prologue' ? 'Nuevo cassette desbloqueado: Capítulo 1' : 'Grabación completada');
     if (id === 'chapter1') this.renderPuzzle();
@@ -507,6 +669,12 @@ class Game {
         setTimeout(() => this.renderComputerMenu(), 900);
       } else overlay.querySelector('#answerMessage').textContent = 'Respuesta incorrecta. Puede intentar nuevamente.';
     };
+    overlay.querySelector('#answer').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        overlay.querySelector('#submitAnswer').click();
+      }
+    });
   }
   renderPasswords() {
     const overlay = document.querySelector('#computerOverlay');
@@ -520,6 +688,12 @@ class Game {
         this.renderEndingFolder(endingId);
       } else overlay.querySelector('#passwordMessage').textContent = 'ACCESO DENEGADO';
     };
+    overlay.querySelector('#password').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        overlay.querySelector('#submitPassword').click();
+      }
+    });
   }
   renderEndingFolder(id) {
     const ending = endingChapters.find((entry) => entry.id === id);

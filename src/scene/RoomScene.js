@@ -13,6 +13,7 @@ export class RoomScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.raycaster = new THREE.Raycaster();
     this.interactables = [];
+    this.colliders = [];
     this.clock = new THREE.Clock();
     this.build();
   }
@@ -20,6 +21,8 @@ export class RoomScene {
   box(w, h, d, color, x, y, z, name) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this.mat(color));
     mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true;
+    mesh.userData.collider = { halfWidth: w / 2, halfDepth: d / 2, minY: y - h / 2, maxY: y + h / 2 };
+    this.colliders.push(mesh);
     if (name) mesh.userData.id = name;
     this.scene.add(mesh); return mesh;
   }
@@ -165,10 +168,24 @@ export class RoomScene {
     const hits = this.raycaster.intersectObjects(this.interactables, false);
     return hits[0] || null;
   }
-  setPhase(phase, keysFound = false) {
+  isBlocked(x, z) {
+    const radius = 0.24;
+    const playerBottom = this.camera.position.y - 1.55;
+    const playerTop = this.camera.position.y + 0.1;
+    return this.colliders.some((mesh) => {
+      const { halfWidth, halfDepth, minY, maxY } = mesh.userData.collider;
+      if (playerBottom >= maxY || playerTop <= minY) return false;
+      const nearestX = THREE.MathUtils.clamp(x, mesh.position.x - halfWidth, mesh.position.x + halfWidth);
+      const nearestZ = THREE.MathUtils.clamp(z, mesh.position.z - halfDepth, mesh.position.z + halfDepth);
+      const dx = x - nearestX;
+      const dz = z - nearestZ;
+      return dx * dx + dz * dz < radius * radius;
+    });
+  }
+  setPhase(phase, keysFound = false, chapter2Completed = false) {
     this.mainLight.intensity = [1.8, 1.55, 1.35, 1.15, 0.9][Math.min(phase, 4)];
     this.cabinetLight.intensity = phase >= 3 ? 0.55 : 0;
-    this.setKeyVisible(phase >= 3 && this.drawerOpen && !keysFound);
+    this.setKeyVisible(chapter2Completed && this.drawerOpen && !keysFound);
   }
   update(delta) {
     this.resize();
