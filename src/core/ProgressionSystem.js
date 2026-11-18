@@ -27,7 +27,7 @@ export class ProgressionSystem {
   }
   collectKeys() {
     const s = this.game.state.state;
-    if (s.keysFound) return false;
+    if (s.keysFound || !s.completed.includes('chapter2') || !s.drawer1Open) return false;
     s.keysFound = true; s.inventory.push('Llaves');
     this.game.save();
     return true;
@@ -40,13 +40,6 @@ export class ProgressionSystem {
     s.phase = Math.max(s.phase, 3);
     this.game.save();
     return true;
-  }
-  openLocker() {
-    const s = this.game.state.state;
-    if (!s.keysFound) return 'locked';
-    s.lockerOpen = true;
-    this.game.save();
-    return 'open';
   }
   addEnding(id) {
     const s = this.game.state.state;

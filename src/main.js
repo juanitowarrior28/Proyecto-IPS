@@ -30,9 +30,22 @@ class Game {
     this.pauseState = null;
     this.loadingTimeout = null;
     this.loadingInterval = null;
+    this.endingCinematicTimeout = null;
+    this.endingCinematic = null;
+    this.mainMusicGestureHandler = () => {
+      if (this.mode === 'menu') this.startMainMusic();
+    };
+    document.addEventListener('pointerdown', this.mainMusicGestureHandler);
+    document.addEventListener('keydown', this.mainMusicGestureHandler);
+    window.addEventListener('beforeunload', () => this.save());
     this.renderMenu();
   }
   save() { this.saveManager.save(this.state.state); }
+  startMainMusic() {
+    this.audio.startMainMusic(this.state.state.settings).catch((error) => {
+      console.warn('No se pudo iniciar la música principal.', error);
+    });
+  }
   notify(message) {
     const el = document.createElement('div');
     el.className = 'toast'; el.textContent = message;
@@ -41,6 +54,7 @@ class Game {
   }
   renderMenu() {
     this.mode = 'menu';
+    this.startMainMusic();
     const saved = this.saveManager.exists();
     this.app.innerHTML = `
       <main class="menu-screen">
@@ -50,7 +64,7 @@ class Game {
           <h1>EFFECTO<br>IPS</h1>
           <div class="menu-actions">
             <button id="newGame">Nueva partida</button>
-            ${saved ? '<button id="continueGame">Continuar partida</button>' : ''}
+            ${saved ? '<button id="continueGame">Continuar</button>' : ''}
             <button id="settings">Configuración</button>
           </div>
         </section>
@@ -73,6 +87,7 @@ class Game {
     clearTimeout(this.loadingTimeout);
     clearInterval(this.loadingInterval);
     this.mode = 'loading';
+    this.audio.stopMainMusic(2);
     const quote = quotes[Math.floor(Math.random() * quotes.length)];
     this.app.innerHTML = `
       <main class="scripture-loading menu-screen" aria-label="Pantalla de carga">
@@ -102,10 +117,14 @@ class Game {
       onComplete();
     }, Game.loadingDuration);
   }
-  renderSettings(fromPause = false) {
+  renderSettings(fromPause = false, reuseRoot = null) {
+    if (!fromPause) {
+      this.mode = 'settings';
+      this.audio.stopMainMusic(2);
+    }
     const s = this.state.state.settings;
-    const settingsRoot = fromPause ? document.createElement('div') : this.app;
-    if (fromPause) {
+    const settingsRoot = reuseRoot || (fromPause ? document.createElement('div') : this.app);
+    if (fromPause && !reuseRoot) {
       settingsRoot.id = 'settingsOverlay';
       document.body.appendChild(settingsRoot);
     }
@@ -115,39 +134,98 @@ class Game {
           <h2>CONFIGURACIÓN</h2>
           <label>Subtítulos <input id="subtitleSetting" type="checkbox" ${s.subtitles ? 'checked' : ''}></label>
           <label>Volumen general <input id="generalVolume" type="range" min="0" max="1" step="0.05" value="${s.generalVolume}"></label>
+          <label>Volumen de música <input id="musicVolume" type="range" min="0" max="1" step="0.05" value="${s.musicVolume}"></label>
           <label>Sensibilidad <input id="sensitivity" type="range" min="0.5" max="3.5" step="0.1" value="${s.mouseSensitivity}"></label>
           <label>Reducir parpadeos <input id="reduceFlashes" type="checkbox" ${s.reduceFlashes ? 'checked' : ''}></label>
           <label>Reducir movimiento <input id="reduceMovement" type="checkbox" ${s.reduceMovement ? 'checked' : ''}></label>
           <label>Interferencias <input id="interference" type="checkbox" ${s.interference ? 'checked' : ''}></label>
+          <button id="aboutButton" type="button">ABOUT / CRÉDITOS</button>
           <button id="backMenu">${fromPause ? 'Volver a pausa' : 'Volver al menú'}</button>
         </section>
       </main>`;
-    const values = ['subtitleSetting','generalVolume','sensitivity','reduceFlashes','reduceMovement','interference'];
+    const values = ['subtitleSetting','generalVolume','musicVolume','sensitivity','reduceFlashes','reduceMovement','interference'];
     values.forEach((id) => settingsRoot.querySelector('#'+id).addEventListener('change', (e) => {
-      const map = { subtitleSetting:'subtitles', generalVolume:'generalVolume', sensitivity:'mouseSensitivity', reduceFlashes:'reduceFlashes', reduceMovement:'reduceMovement', interference:'interference' };
-      s[map[id]] = e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value);
+      const map = {
+        subtitleSetting: 'subtitles',
+        generalVolume: 'generalVolume',
+        musicVolume: 'musicVolume',
+        sensitivity: 'mouseSensitivity',
+        reduceFlashes: 'reduceFlashes',
+        reduceMovement: 'reduceMovement',
+        interference: 'interference'
+      };
+      s[map[id]] = e.target.type === 'checkbox'
+        ? e.target.checked
+        : e.target.type === 'select-one' ? e.target.value : Number(e.target.value);
       if (id === 'sensitivity') this.lookSensitivity = 0.0045 * s.mouseSensitivity;
+      if (id === 'musicVolume') this.audio.setMusicVolume(s.musicVolume);
       this.save();
     }));
+    settingsRoot.querySelector('#aboutButton').onclick = () => this.renderAbout(settingsRoot, fromPause);
     settingsRoot.querySelector('#backMenu').onclick = () => {
       if (fromPause) settingsRoot.remove();
       else this.renderMenu();
     };
   }
+  renderAbout(settingsRoot, fromPause) {
+    settingsRoot.innerHTML = `
+      <main class="menu-screen settings-screen">
+        <section class="menu-panel settings-panel credits-panel" aria-labelledby="aboutTitle">
+          <h2 id="aboutTitle">ABOUT / CRÉDITOS</h2>
+          <dl>
+            <dt>Dirección y diseño</dt>
+            <dd>Mariana Monsalve<br>Juan José Guerrero García</dd>
+            <dt>Programación</dt>
+            <dd>Juan José Guerrero García</dd>
+            <dt>Modelado 3D y escenarios</dt>
+            <dd>Mariana Monsalve</dd>
+            <dt>Diseño de sonido</dt>
+            <dd>Juan José Guerrero García</dd>
+            <dt>Composición</dt>
+            <dd>Tweenty Eight</dd>
+            <dt>Voice acting</dt>
+            <dd>
+              <ul>
+                <li>Juan José Guerrero García — Protagonista (028)</li>
+                <li>Wilmar Ruiz — Doctor</li>
+                <li>Francisco Javier Guerrero — Vincent</li>
+                <li>Mariana Monsalve — Emma</li>
+                <li>Milena García — Enfermera</li>
+                <li>Luismi — Guardia de seguridad</li>
+                <li>Profesor de medios — Noticiero</li>
+              </ul>
+            </dd>
+            <dt>Agradecimientos especiales</dt>
+            <dd>Universidad de San Buenaventura de Medellín<br>Facultad de Ingeniería</dd>
+          </dl>
+          <p class="credits-copyright">© 2026</p>
+          <button id="backAbout" type="button">Volver a configuración</button>
+        </section>
+      </main>`;
+    settingsRoot.querySelector('#backAbout').onclick = () => this.renderSettings(fromPause, settingsRoot);
+  }
   startGame() {
     this.controlsAbortController?.abort();
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
-    this.app.innerHTML = `<canvas id="gameCanvas"></canvas><div id="crosshair"></div><div id="contextHint"></div><div id="lookTip">RATÓN: MIRAR · WASD: MOVER · E: INTERACTUAR · CLIC: CAPTURAR RATÓN</div><div id="holdIndicator" class="hold-indicator" hidden><span id="holdLabel"></span><div class="hold-track"><div id="holdFill"></div></div></div><div id="hotbar" class="hotbar" aria-label="Inventario"></div><div id="hud"></div><div id="computerOverlay"></div><button id="gameMenuButton" class="game-menu-button" aria-label="Abrir menú de pausa" title="Opciones">⋮</button><div id="pauseMenu" class="pause-menu" hidden><section class="pause-panel" role="dialog" aria-modal="true" aria-labelledby="pauseTitle"><h2 id="pauseTitle">PAUSA</h2><button id="resumeGame">SEGUIR JUGANDO</button><button id="saveGame">GUARDAR PARTIDA</button><button id="pauseSettings">CONFIGURACIÓN</button><button id="exitToMenu">SALIR AL MENÚ</button></section></div>`;
+    document.body.classList.add('game-playing');
+    document.body.classList.remove('computer-active');
+    this.app.innerHTML = `<canvas id="gameCanvas"></canvas><div id="crosshair"></div><div id="contextHint"></div><aside id="objectiveGuide" class="objective-guide" aria-live="polite"><div id="guideHeader" class="guide-header"><h2>GUÍA DE CAMPO</h2><button id="collapseGuide" class="guide-toggle" type="button" aria-label="Ocultar instrucciones" aria-expanded="true">×</button></div><p id="guideControls" class="guide-controls">Clic en la escena para activar la cámara. Muévete con WASD y apunta al centro del objeto.<br><br>Pulsa E o haz clic para interactuar. Mantén E 5 segundos para recoger objetos.<br><br>Pulsa ESC para abrir opciones y X para ocultar esta guía.</p><div class="guide-objective-row"><p id="guideObjective" class="guide-objective"></p><button id="expandGuide" class="guide-toggle guide-expand" type="button" aria-label="Mostrar instrucciones" aria-expanded="false" hidden>+</button></div></aside><div id="lookTip">RATÓN: MIRAR · WASD: MOVER · E: INTERACTUAR · CLIC: CAPTURAR RATÓN</div><div id="holdIndicator" class="hold-indicator" hidden><span id="holdLabel"></span><div class="hold-track"><div id="holdFill"></div></div></div><div id="hotbar" class="hotbar" aria-label="Inventario"></div><div id="hud"></div><div id="computerOverlay"></div><button id="gameMenuButton" class="game-menu-button" aria-label="Abrir menú de pausa" title="Opciones">⋮</button><div id="pauseMenu" class="pause-menu" hidden><section class="pause-panel" role="dialog" aria-modal="true" aria-labelledby="pauseTitle"><h2 id="pauseTitle">PAUSA</h2><button id="resumeGame">SEGUIR JUGANDO</button><button id="saveGame">GUARDAR PARTIDA</button><button id="pauseSettings">CONFIGURACIÓN</button><button id="exitToMenu">SALIR AL MENÚ</button></section></div>`;
     this.room = new RoomScene(document.querySelector('#gameCanvas'));
+    this.room.onLightning = () => this.audio.playThunder();
     this.room.setPhase(
       this.state.state.phase,
       this.state.state.keysFound,
-      this.state.state.completed.includes('chapter2')
+      this.state.state.completed.includes('chapter2'),
+      this.state.state.drawer1Open
     );
     this.room.setCompartmentState(
       this.state.state.compartmentUnlocked,
       this.state.state.compartmentOpen,
       this.state.state.tape3Found
+    );
+    this.room.setChapter3Completed(
+      this.state.state.completed.includes('chapter3'),
+      this.state.state.drawer3Open
     );
     this.keys = {};
     this.mouseLookEnabled = false;
@@ -159,7 +237,7 @@ class Game {
     this.renderHotbar();
     this.pauseState = null;
     this.audio.ensure();
-    this.audio.ambient();
+    this.audio.startRoomAmbience();
     this.animate();
   }
   setupControls() {
@@ -170,6 +248,7 @@ class Game {
       if (this.mode === 'room') {
         this.mouseLookEnabled = true;
         if (document.pointerLockElement !== document.body) this.requestPointerLock();
+        this.audio.startRoomAmbience();
       }
       this.audio.ensure();
     }, listenerOptions);
@@ -197,9 +276,31 @@ class Game {
       this.keys[e.code] = true;
       if (e.code === 'KeyI' && this.mode === 'room') this.toggleInventory();
       if (e.code === 'KeyE' && this.mode === 'room' && !e.repeat) this.handleEKeyDown();
-      if (e.code === 'Escape' && this.mode === 'computer') this.leaveComputer();
-      if (e.code === 'Escape' && this.mode === 'room') this.openPauseMenu();
-      if (e.code === 'Escape' && this.mode === 'paused' && !document.querySelector('#settingsOverlay')) this.resumeGame();
+      if (e.code === 'KeyX' && this.mode === 'room') {
+        const guide = document.querySelector('#objectiveGuide');
+        if (guide && !guide.classList.contains('collapsed')) {
+          document.querySelector('#collapseGuide').click();
+        }
+      }
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        if (this.mode === 'computer') {
+          this.leaveComputer();
+          return;
+        }
+        if (this.mode === 'readingNote') {
+          this.closeDrawerNote();
+          return;
+        }
+        if (this.mode === 'room') {
+          this.openPauseMenu();
+          return;
+        }
+        if (this.mode === 'paused' && !document.querySelector('#settingsOverlay')) {
+          this.resumeGame();
+        }
+        return;
+      }
     }, listenerOptions);
     document.addEventListener('keyup', (e) => {
       this.keys[e.code] = false;
@@ -217,6 +318,15 @@ class Game {
     };
     document.querySelector('#pauseSettings').onclick = () => this.renderSettings(true);
     document.querySelector('#exitToMenu').onclick = () => this.exitToMenu();
+    const guide = document.querySelector('#objectiveGuide');
+    const toggleGuide = (collapsed) => {
+      guide.classList.toggle('collapsed', collapsed);
+      document.querySelector('#collapseGuide').setAttribute('aria-expanded', String(!collapsed));
+      document.querySelector('#expandGuide').hidden = !collapsed;
+      document.querySelector('#expandGuide').setAttribute('aria-expanded', String(!collapsed));
+    };
+    document.querySelector('#collapseGuide').onclick = () => toggleGuide(true);
+    document.querySelector('#expandGuide').onclick = () => toggleGuide(false);
   }
   animate() {
     this.animationFrame = requestAnimationFrame(() => this.animate());
@@ -230,18 +340,53 @@ class Game {
       this.move(delta);
     }
     this.updateRaycast();
+    this.updateObjectiveGuide();
     this.updateHoldInteraction();
     this.room.update(delta);
     this.room.render();
   }
+  updateObjectiveGuide() {
+    const objective = document.querySelector('#guideObjective');
+    if (!objective) return;
+    const state = this.state.state;
+    let message;
+    if (this.mode === 'computer' && document.querySelector('#password')) {
+      message = 'Busca la contraseña en el entorno o recuerda lo dicho en los audios; quizá sea el nombre de algún medicamento.';
+    } else if (this.mode === 'computer' && document.querySelector('.player')) {
+      message = 'Reproduce el cassette. Puedes pausar, avanzar o retroceder y activar los subtítulos.';
+    } else if (!state.completed.includes('prologue')) {
+      message = 'Objetivo: usa el computador y escucha el prólogo completo.';
+    } else if (!state.completed.includes('chapter1')) {
+      message = 'Nuevo cassette disponible. Vuelve al computador y escucha el capítulo 1 completo.';
+    } else if (!state.puzzleSolved) {
+      message = 'Revisa el cuestionario en el computador y responde para desbloquear el capítulo 2.';
+    } else if (!state.completed.includes('chapter2')) {
+      message = 'Vuelve al computador y escucha el capítulo 2 completo.';
+    } else if (!state.keysFound) {
+      message = 'Hm, el capítulo 3 está cerrado, ¿no habrá alguna llave por aquí...? Abre el cajón 1 y mantén E para recogerla.';
+    } else if (!state.compartmentUnlocked) {
+      message = 'Busca el compartimento superior y usa la llave para desbloquearlo.';
+    } else if (!state.tape3Found) {
+      message = 'El compartimento está abierto. Mantén E 5 segundos sobre el cassette para recogerlo.';
+    } else if (!state.completed.includes('chapter3')) {
+      message = 'El capítulo 3 ya está disponible. Regresa al computador y escucha el cassette.';
+    } else if (state.endings.length < 3) {
+      message = 'Busca pistas en el entorno y en los cassettes. El cajón 3 podría guardar una contraseña.';
+    } else {
+      message = 'Explora las carpetas de los finales en el computador para reproducir los cassettes desbloqueados.';
+    }
+    if (objective.textContent !== message) objective.textContent = message;
+  }
   openPauseMenu() {
     if (!['room', 'computer'].includes(this.mode)) return;
+    if (this.mode === 'computer' && this.isFirstEndingListen() && this.audioElement && !this.audioElement.paused) return;
     this.pauseState = {
       mode: this.mode,
       mouseLookEnabled: this.mouseLookEnabled,
       audioWasPlaying: Boolean(this.audioElement && !this.audioElement.paused)
     };
     this.mode = 'paused';
+    document.body.classList.add('pause-menu-active');
     this.keys = {};
     this.cancelHoldInteraction();
     this.audioElement?.pause();
@@ -254,6 +399,7 @@ class Game {
     document.querySelector('#pauseMenu').hidden = true;
     const pauseState = this.pauseState;
     this.mode = pauseState?.mode || 'room';
+    document.body.classList.remove('pause-menu-active');
     this.mouseLookEnabled = this.mode === 'room' || Boolean(pauseState?.mouseLookEnabled);
     this.pauseState = null;
     if (pauseState?.audioWasPlaying && this.audioElement) {
@@ -264,18 +410,28 @@ class Game {
     }
   }
   exitToMenu() {
+    this.cleanupGame();
+    this.showScriptureLoading(() => this.renderMenu());
+  }
+  cleanupGame() {
     this.save();
     this.cancelHoldInteraction();
     this.stopAudio();
+    this.audio.stopRoomAmbience();
     if (document.pointerLockElement) document.exitPointerLock();
     this.controlsAbortController?.abort();
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
     this.animationFrame = null;
-    this.room.renderer.dispose();
+    if (this.room) this.room.renderer.dispose();
     this.room = null;
     this.keys = {};
     this.pauseState = null;
-    this.showScriptureLoading(() => this.renderMenu());
+    document.body.classList.remove('ending-transition');
+    document.body.classList.remove('game-playing', 'computer-active', 'pause-menu-active', 'note-active');
+  }
+  returnToMainMenu() {
+    this.cleanupGame();
+    this.renderMenu();
   }
   move(delta) {
     const speed = this.state.state.settings.reduceMovement ? 1.5 : 2.2;
@@ -340,10 +496,17 @@ class Game {
     if (!hit) { hint.textContent = ''; document.querySelector('#crosshair').classList.remove('active'); return; }
     document.querySelector('#crosshair').classList.add('active');
     const id = hit.object.userData.id;
+    if (id === 'drawerNote') {
+      hint.textContent = '';
+      return;
+    }
     const labels = {
       computer: 'Usar computador',
-      locker: 'Examinar locker',
-      drawer: 'Abrir cajón',
+      drawer: hit.object.userData.drawerIndex === 2
+        ? (this.state.state.completed.includes('chapter3')
+          ? (this.state.state.drawer3Open ? 'Cerrar cajón 3' : 'Abrir cajón 3 · buscar nota')
+          : 'Cajón 3 cerrado · escucha capítulo 3')
+        : 'Abrir cajón',
       shelf: this.state.state.compartmentUnlocked
         ? (this.state.state.compartmentOpen ? 'Cerrar compartimento' : 'Abrir compartimento')
         : (this.state.state.keysFound ? 'Desbloquear compartimento' : 'Bloqueado: necesitas la llave'),
@@ -357,7 +520,7 @@ class Game {
   }
   handleEKeyDown() {
     const id = this.currentHit?.object.userData.id;
-    if (id === 'key' && !this.state.state.keysFound) {
+    if (id === 'key' && this.canCollectKey()) {
       this.startHoldInteraction('key');
       return;
     }
@@ -369,6 +532,7 @@ class Game {
   }
   startHoldInteraction(id) {
     if (this.holdInteraction) return;
+    if (id === 'key' && !this.canCollectKey()) return;
     this.holdInteraction = { id, startedAt: performance.now() };
     const label = id === 'key' ? 'RECOGIENDO LLAVE' : 'RECOGIENDO CASSETTE';
     document.querySelector('#holdLabel').textContent = `MANTÉN E · ${label} 0%`;
@@ -380,7 +544,7 @@ class Game {
     const { id, startedAt } = this.holdInteraction;
     const isTargeted = this.currentHit?.object.userData.id === id;
     const isAvailable = id === 'key'
-      ? !this.state.state.keysFound
+      ? this.canCollectKey()
       : this.room.tape.visible && this.state.state.compartmentOpen;
     if (!isTargeted || !isAvailable) {
       this.cancelHoldInteraction();
@@ -397,7 +561,12 @@ class Game {
     document.querySelector('#holdIndicator').hidden = true;
     if (id === 'key') {
       if (this.progress.collectKeys()) {
-        this.room.setKeyVisible(false);
+        this.room.setPhase(
+          this.state.state.phase,
+          this.state.state.keysFound,
+          this.state.state.completed.includes('chapter2'),
+          this.state.state.drawer1Open
+        );
         this.renderHotbar();
         this.notify('Llave recogida. Ahora puedes desbloquear el compartimento superior.');
       }
@@ -414,6 +583,13 @@ class Game {
     this.holdInteraction = null;
     const indicator = document.querySelector('#holdIndicator');
     if (indicator) indicator.hidden = true;
+  }
+  canCollectKey() {
+    const state = this.state.state;
+    return state.completed.includes('chapter2')
+      && state.drawer1Open
+      && this.room.drawerOpen
+      && !state.keysFound;
   }
   renderHotbar() {
     const bar = document.querySelector('#hotbar');
@@ -447,10 +623,32 @@ class Game {
     this.audio.click();
     if (id === 'computer') this.enterComputer();
     if (id === 'drawer') {
-      const keyAvailable = this.state.state.completed.includes('chapter2') && !this.state.state.keysFound;
-      this.room.openDrawer(hit.object.userData.drawerIndex, keyAvailable);
-      this.notify(keyAvailable ? 'El cajón se abre. Hay una llave dentro.' : 'El cajón se abre; está vacío.');
+      const drawerIndex = hit.object.userData.drawerIndex;
+      const chapter2Completed = this.state.state.completed.includes('chapter2');
+      const chapter3Completed = this.state.state.completed.includes('chapter3');
+      if (drawerIndex === 0 && !chapter2Completed) {
+        this.notify('Primero debes reproducir el capítulo 2. Después podrás abrir este cajón.');
+        return;
+      }
+      if (drawerIndex === 2 && !chapter3Completed) {
+        this.notify('Este cajón sigue cerrado. Primero escucha el capítulo 3.');
+        return;
+      }
+      const isOpen = this.room.openDrawer(drawerIndex);
+      if (drawerIndex === 0) {
+        this.state.state.drawer1Open = isOpen;
+        this.save();
+      } else if (drawerIndex === 2) {
+        this.state.state.drawer3Open = isOpen;
+        this.save();
+      }
+      this.notify(drawerIndex === 0 && isOpen && !this.state.state.keysFound
+        ? 'Cajón 1 abierto. Mantén E para recoger la llave.'
+        : drawerIndex === 2 && isOpen
+          ? 'Cajón 3 abierto. Mira la nota y pulsa E para leerla.'
+          : isOpen ? 'El cajón se abre; está vacío.' : 'Cajón cerrado.');
     }
+    if (id === 'drawerNote') this.readDrawerNote();
     if (id === 'shelf') {
       const state = this.state.state;
       if (!state.compartmentUnlocked) {
@@ -473,17 +671,13 @@ class Game {
     if (id === 'key') {
       this.notify('Mantén E durante 5 segundos para recoger la llave.');
     }
-    if (id === 'locker') {
-      const result = this.progress.openLocker();
-      if (result === 'locked') this.notify('La cerradura requiere llaves.');
-      else this.notify('Locker abierto');
-    }
     if (id === 'tape' && this.room.tape.visible) {
       this.notify('Mantén E durante 5 segundos para recoger el cassette.');
     }
   }
   enterComputer() {
     this.mode = 'computer';
+    document.body.classList.add('computer-active');
     if (document.pointerLockElement) document.exitPointerLock();
     this.computerView = {
       position: this.room.camera.position.clone(),
@@ -515,11 +709,14 @@ class Game {
     requestAnimationFrame(step);
   }
   leaveComputer() {
+    if (this.isFirstEndingListen() && this.audioElement && !this.audioElement.paused) return;
     if (this.computerView) {
       this.room.camera.position.copy(this.computerView.position);
       this.room.camera.quaternion.copy(this.computerView.quaternion);
     }
     this.mode = 'room';
+    document.body.classList.remove('computer-active');
+    document.body.classList.remove('ending-transition');
     document.querySelector('#computerOverlay').style.display = 'none';
     document.querySelector('#hotbar').hidden = false;
     this.stopAudio();
@@ -554,7 +751,11 @@ class Game {
   }
   renderPlayer(id) {
     const chapter = [...chapters, ...endingChapters].find((c) => c.id === id);
+    if (!chapter) return;
+    const isEnding = endingChapters.some((ending) => ending.id === id);
+    if (isEnding && !this.state.state.endingCassettes.includes(id)) return;
     this.stopAudio();
+    const firstEndingListen = isEnding && this.state.state.endingPlayCounts[id] === 0;
     this.subtitleVisible = this.state.state.settings.subtitles;
     const overlay = document.querySelector('#computerOverlay');
     overlay.innerHTML = `
@@ -562,10 +763,10 @@ class Game {
         <div class="crt-header"><span>${chapter.title}</span><button id="playerBack">VOLVER</button></div>
         <div class="player-art"><img src="${chapter.image}" alt=""><strong>${chapter.title}</strong><div id="subtitleBox" class="subtitle-box"></div></div>
         <div class="transport">
-          <button id="rewind">« 15</button><button id="play">REPRODUCIR</button><button id="pause">PAUSA</button><button id="forward">15 »</button>
+          <button id="rewind">« 15</button><button id="play">REPRODUCIR</button><button id="pause" ${firstEndingListen ? 'disabled' : ''}>PAUSA</button><button id="forward" ${firstEndingListen ? 'disabled' : ''}>15 »</button>
           ${chapter.subtitles ? `<button id="subtitles">${this.subtitleVisible ? 'SUBTÍTULOS: ON' : 'SUBTÍTULOS: OFF'}</button>` : ''}
         </div>
-        <input id="progressBar" type="range" min="0" max="${chapter.duration}" value="0" step="0.1">
+        <input id="progressBar" type="range" min="0" max="${chapter.duration}" value="0" step="0.1" ${firstEndingListen ? 'disabled' : ''}>
         <div class="time-row"><span id="elapsed">00:00</span><span id="duration">00:20</span></div>
         <div id="audioError" class="audio-error"></div>
       </div>`;
@@ -608,15 +809,26 @@ class Game {
       if (this.audioElement === audioElement) this.updatePlayer();
     });
     audioElement.addEventListener('ended', () => {
-      if (this.audioElement === audioElement) this.chapterEnded(id);
+      if (this.audioElement !== audioElement) return;
+      if (isEnding && !this.audioPlayedCompletely(audioElement)) {
+        this.notify('Para ver este final, escucha el cassette completo sin adelantarlo.');
+        return;
+      }
+      this.chapterEnded(id);
     });
     overlay.querySelector('#play').onclick = () => audioElement.play().catch(() => {
       if (this.audioElement === audioElement) overlay.querySelector('#audioError').textContent = 'El navegador bloqueó la reproducción.';
     });
-    overlay.querySelector('#pause').onclick = () => audioElement.pause();
+    overlay.querySelector('#pause').onclick = () => {
+      if (!firstEndingListen) audioElement.pause();
+    };
     overlay.querySelector('#rewind').onclick = () => { audioElement.currentTime = Math.max(0, audioElement.currentTime - 15); };
-    overlay.querySelector('#forward').onclick = () => { audioElement.currentTime = Math.min(audioElement.duration || 0, audioElement.currentTime + 15); };
-    overlay.querySelector('#progressBar').oninput = (e) => { audioElement.currentTime = Number(e.target.value); };
+    overlay.querySelector('#forward').onclick = () => {
+      if (!firstEndingListen) audioElement.currentTime = Math.min(audioElement.duration || 0, audioElement.currentTime + 15);
+    };
+    overlay.querySelector('#progressBar').oninput = (e) => {
+      if (!firstEndingListen) audioElement.currentTime = Number(e.target.value);
+    };
     const subtitlesButton = overlay.querySelector('#subtitles');
     if (subtitlesButton) {
       subtitlesButton.onclick = (e) => {
@@ -645,18 +857,112 @@ class Game {
     }
   }
   stopAudio() {
+    clearTimeout(this.endingCinematicTimeout);
+    this.endingCinematicTimeout = null;
     if (this.audioElement) { this.audioElement.pause(); this.audioElement.src = ''; this.audioElement = null; }
+  }
+  audioPlayedCompletely(audioElement) {
+    if (!Number.isFinite(audioElement.duration) || audioElement.duration <= 0) return false;
+    let heardUntil = 0;
+    for (let index = 0; index < audioElement.played.length; index++) {
+      const start = audioElement.played.start(index);
+      const end = audioElement.played.end(index);
+      if (start > heardUntil + 0.15) return false;
+      heardUntil = Math.max(heardUntil, end);
+    }
+    return heardUntil >= audioElement.duration - 0.25;
+  }
+  isFirstEndingListen() {
+    return endingChapters.some((ending) => ending.id === this.currentChapter)
+      && this.state.state.endingPlayCounts[this.currentChapter] === 0;
   }
   chapterEnded(id) {
     this.state.emit('CHAPTER_FINISHED', id);
     this.room.setPhase(
       this.state.state.phase,
       this.state.state.keysFound,
-      this.state.state.completed.includes('chapter2')
+      this.state.state.completed.includes('chapter2'),
+      this.state.state.drawer1Open
     );
+    if (id === 'chapter3') {
+      this.room.setChapter3Completed(true, this.state.state.drawer3Open);
+    }
+    const ending = {
+      vincent: ['Final 1: Abierto', '¿Será que escaparon?'],
+      leteo: ['Final 2: Contenido', 'Solo eres uno de muchos'],
+      ips: ['Final 3: Alternativo', 'Era cuestión de tiempo…']
+    }[id];
+    if (ending && this.state.state.endingCassettes.includes(id)) {
+      this.state.state.endingPlayCounts[id] += 1;
+    }
     this.save();
+    if (ending) {
+      if (id === 'ips') {
+        this.mode = 'endingTransition';
+        this.mouseLookEnabled = false;
+        this.keys = {};
+        this.cancelHoldInteraction();
+        if (document.pointerLockElement) document.exitPointerLock();
+        document.body.classList.add('ending-transition');
+        document.querySelector('#computerOverlay').replaceChildren();
+        document.querySelectorAll('.toast').forEach((toast) => toast.remove());
+        this.room.onLightning = null;
+        this.room.lightningCountdown = Infinity;
+        this.room.lightningElapsed = -1;
+        this.room.lightningFlash.material.opacity = 0;
+        this.room.lightningLight.intensity = 0;
+        this.audio.stopRoomAmbience();
+        const knockSequenceDuration = this.audio.playDoorKnocks(0.16);
+        this.turnCameraToDoor(knockSequenceDuration);
+        this.endingCinematicTimeout = setTimeout(() => {
+          this.endingCinematicTimeout = null;
+          this.showEndingCinematic(...ending);
+        }, knockSequenceDuration + 550);
+        return;
+      }
+      this.showEndingCinematic(...ending);
+      return;
+    }
     this.notify(id === 'prologue' ? 'Nuevo cassette desbloqueado: Capítulo 1' : 'Grabación completada');
     if (id === 'chapter1') this.renderPuzzle();
+  }
+  showEndingCinematic(title, line) {
+    this.audio.stopRoomAmbience();
+    this.audio.stopMainMusic();
+    this.mode = 'endingCinematic';
+    const cinematic = document.createElement('main');
+    cinematic.className = 'ending-cinematic';
+    cinematic.setAttribute('aria-label', title);
+    cinematic.innerHTML = `
+      <section class="ending-cinematic-copy" aria-live="polite">
+        <h1>${title}</h1>
+        <p>${line}</p>
+        <button type="button">Volver a la pantalla de inicio</button>
+      </section>`;
+    cinematic.querySelector('button').onclick = () => {
+      cinematic.remove();
+      this.endingCinematic = null;
+      this.returnToMainMenu();
+    };
+    document.body.appendChild(cinematic);
+    this.endingCinematic = cinematic;
+  }
+  turnCameraToDoor(duration) {
+    const camera = this.room.camera;
+    const target = new THREE.Object3D();
+    target.position.copy(camera.position);
+    target.lookAt(0, 1.05, 2.42);
+    const startOrientation = camera.quaternion.clone();
+    const endOrientation = target.quaternion.clone();
+    const startedAt = performance.now();
+    const rotate = (now) => {
+      if (this.mode !== 'endingTransition') return;
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      camera.quaternion.slerpQuaternions(startOrientation, endOrientation, eased);
+      if (progress < 1) requestAnimationFrame(rotate);
+    };
+    requestAnimationFrame(rotate);
   }
   renderPuzzle() {
     const overlay = document.querySelector('#computerOverlay');
@@ -678,7 +984,7 @@ class Game {
   }
   renderPasswords() {
     const overlay = document.querySelector('#computerOverlay');
-    overlay.innerHTML = `<div class="crt quiz"><div class="crt-header"><span>TERMINAL // ACCESO FINAL</span><button id="passwordBack">VOLVER</button></div><h2>INTRODUCIR CONTRASEÑA</h2><input id="password" autocomplete="off"><button id="submitPassword">Acceder</button><p id="passwordMessage"></p></div>`;
+    overlay.innerHTML = `<div class="crt quiz"><div class="crt-header"><span>TERMINAL // ACCESO FINAL</span><button id="passwordBack">VOLVER</button></div><h2>INTRODUCIR CONTRASEÑA</h2><p class="password-hint">Busca la contraseña en el entorno o recuerda lo dicho en los audios; quizá sea el nombre de algún medicamento.</p><input id="password" autocomplete="off"><button id="submitPassword">Acceder</button><p id="passwordMessage"></p></div>`;
     overlay.querySelector('#passwordBack').onclick = () => this.renderComputerMenu();
     overlay.querySelector('#submitPassword').onclick = () => {
       const value = overlay.querySelector('#password').value.toLowerCase().replace(/\s+/g, '');
@@ -694,6 +1000,39 @@ class Game {
         overlay.querySelector('#submitPassword').click();
       }
     });
+  }
+  readDrawerNote() {
+    if (this.mode !== 'room' || !this.room.drawer3Open || !this.state.state.completed.includes('chapter3')) return;
+    const note = document.createElement('section');
+    note.className = 'drawer-note-overlay';
+    note.setAttribute('role', 'dialog');
+    note.setAttribute('aria-modal', 'true');
+    note.setAttribute('aria-labelledby', 'drawerNoteTitle');
+    note.innerHTML = `
+      <article class="drawer-note">
+        <button class="drawer-note-close" type="button" aria-label="Cerrar nota">×</button>
+        <h2 id="drawerNoteTitle">CLAVE: IPS</h2>
+        <p>Paciente 028 se encuentra ausente tras escapar. Aún continúa la búsqueda. Mantengan la precaución: un frasco con la dosis apareció estrellado contra el suelo de la habitación por donde suponemos que escapó el paciente.</p>
+        <button class="drawer-note-done" type="button">CERRAR</button>
+      </article>`;
+    document.body.appendChild(note);
+    this.noteOverlay = note;
+    this.mode = 'readingNote';
+    document.body.classList.add('note-active');
+    this.mouseLookEnabled = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    const close = () => this.closeDrawerNote();
+    note.querySelector('.drawer-note-close').onclick = close;
+    note.querySelector('.drawer-note-done').onclick = close;
+    note.addEventListener('click', (event) => {
+      if (event.target === note) close();
+    });
+  }
+  closeDrawerNote() {
+    this.noteOverlay?.remove();
+    this.noteOverlay = null;
+    document.body.classList.remove('note-active');
+    if (this.mode === 'readingNote') this.mode = 'room';
   }
   renderEndingFolder(id) {
     const ending = endingChapters.find((entry) => entry.id === id);
