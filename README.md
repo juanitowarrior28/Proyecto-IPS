@@ -16,6 +16,8 @@ npm run dev
 
 Abra la URL que indique Vite. Pulse el lienzo para capturar el ratón y use WASD para moverse.
 
+En macOS, también puedes abrir `Abrir Effecto IPS.command` con doble clic. El lanzador inicia Vite y abre el juego en el navegador; deja abierta la ventana de Terminal mientras juegas y pulsa Ctrl+C para detener el servidor. No abras `index.html` directamente, porque el juego necesita Vite.
+
 Controles:
 
 - W/A/S/D: movimiento
