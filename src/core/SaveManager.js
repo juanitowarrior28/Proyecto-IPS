@@ -17,6 +17,7 @@ export const defaultSave = () => ({
   endings: [],
   endingCassettes: [],
   endingPlayCounts: { vincent: 0, leteo: 0, ips: 0 },
+  ipsRewardDownloaded: false,
   settings: {
     subtitles: true,
     generalVolume: 0.8,
@@ -51,6 +52,7 @@ export class SaveManager {
         ? data.endings.map((ending) => legacyEndingIds[ending] || ending)
         : [];
       save.endingCassettes = Array.isArray(data.endingCassettes) ? data.endingCassettes : [];
+      save.ipsRewardDownloaded = data.ipsRewardDownloaded === true;
       const endingIds = ['vincent', 'leteo', 'ips'];
       const storedPlayCounts = data.endingPlayCounts && typeof data.endingPlayCounts === 'object'
         ? data.endingPlayCounts

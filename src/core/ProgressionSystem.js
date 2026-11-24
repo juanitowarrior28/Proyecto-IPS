@@ -45,12 +45,14 @@ export class ProgressionSystem {
     const s = this.game.state.state;
     if (!s.endings.includes(id)) s.endings.push(id);
     this.game.save();
+    if (id === 'ips') this.game.grantIpsReward();
   }
   unlockEndingCassette(id) {
     const s = this.game.state.state;
     if (!s.endings.includes(id) || !['vincent', 'leteo', 'ips'].includes(id)) return false;
     if (!s.endingCassettes.includes(id)) s.endingCassettes.push(id);
     this.game.save();
+    if (id === 'ips') this.game.grantIpsReward();
     return true;
   }
 }

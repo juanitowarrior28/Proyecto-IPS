@@ -41,6 +41,20 @@ class Game {
     this.renderMenu();
   }
   save() { this.saveManager.save(this.state.state); }
+  grantIpsReward() {
+    const s = this.state.state;
+    if (s.ipsRewardDownloaded) return;
+    const link = document.createElement('a');
+    link.href = '/assets/images/recompensa-final-ips.png';
+    link.download = 'Effecto IPS - Recompensa Final.png';
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    s.ipsRewardDownloaded = true;
+    this.save();
+    this.notify('Recompensa obtenida: imagen del Final IPS.');
+  }
   startMainMusic() {
     this.audio.startMainMusic(this.state.state.settings).catch((error) => {
       console.warn('No se pudo iniciar la música principal.', error);
@@ -192,7 +206,7 @@ class Game {
                 <li>Mariana Monsalve — Emma</li>
                 <li>Milena García — Enfermera</li>
                 <li>Luismi — Guardia de seguridad</li>
-                <li>Profesor de medios — Noticiero</li>
+                <li>Jorge Eduardo Sierra — Noticiero</li>
               </ul>
             </dd>
             <dt>Agradecimientos especiales</dt>
